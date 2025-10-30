@@ -1,0 +1,19 @@
+services:
+  vrh-managers-api:
+    image: malolet/vrh-managers-api:latest
+    env_file: .env
+    environment:
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_DATABASE=${DB_DATABASE}
+      - API_KEYS=${API_KEYS}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - HOST=${HOST}
+      - PORT=${PORT}
+      - DEBUG=${DEBUG}
+      - RATE_LIMIT=${RATE_LIMIT}
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
