@@ -1,15 +1,16 @@
 FROM python:3.12.12-slim
 
-RUN apk update && apk add --no-cache \
+# Установка системных зависимостей для Debian-based образов
+RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-dev \
     gcc \
     python3-dev \
-    musl-dev \
     libffi-dev \
-    openssl-dev \
-    && rm -rf /var/cache/apk/*
+    libssl-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
 WORKDIR /app
 
