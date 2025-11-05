@@ -96,6 +96,9 @@ def create_app():
         """
 
         try:
+            data = request.get_json()
+            agents = data['agents']
+
             agent_count = len(agents) # Определяем количество агентов
             placeholder_list = ['%s'] * agent_count # Создаем список плейсхолдеров - по одному на каждого агента
             placeholders = ', '.join(placeholder_list) # Объединяем плейсхолдеры через запятую для SQL запроса
