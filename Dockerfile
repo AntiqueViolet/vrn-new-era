@@ -2,7 +2,7 @@ FROM python:3.12.12-slim
 
 # Установка системных зависимостей для Debian-based образов
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    postgresql-dev \
+    libpq-dev \
     gcc \
     python3-dev \
     libffi-dev \
