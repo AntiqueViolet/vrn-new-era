@@ -9,6 +9,7 @@ from flask_cors import CORS
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import re
+from functools import wraps
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,7 +17,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
-
 
 def create_app():
     app = Flask(__name__)
@@ -40,26 +40,39 @@ def create_app():
 
     API_KEYS = set(os.getenv('API_KEYS', '').split(','))
 
-    def validate_api_key():
-        """Проверка API ключа"""
-        api_key = request.headers.get('X-API-Key')
-        if not api_key or api_key not in API_KEYS:
-            return False
-        return True
+    def require_api_key(f):
+        """Декоратор для проверки API ключа"""
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            api_key = request.headers.get('X-API-Key')
+            if not api_key or api_key not in API_KEYS:
+                logger.warning(f"Unauthorized access attempt from {request.remote_addr}")
+                return jsonify({"error": "Unauthorized"}), 401
+            return f(*args, **kwargs)
+        return decorated_function
 
-    def validate_agents(agents):
-        """Валидация списка агентов"""
-        if not isinstance(agents, list):
-            return False, "Agents must be a list"
-
-        if len(agents) > 100:
-            return False, "Too many agents, maximum 100"
-
-        for agent in agents:
-            if not re.match(r'^[a-zA-Z0-9_]+$', str(agent)):
-                return False, f"Invalid agent format: {agent}"
-
-        return True, "Valid"
+    def validate_agents_decorator(max_agents=300, allow_empty=False):
+        """Декоратор для валидации списка агентов с параметрами"""
+        def decorator(f):
+            @wraps(f)
+            def decorated_function(*args, **kwargs):
+                if not request.is_json:
+                    return jsonify({"error": "Content-Type must be application/json"}), 400
+                data = request.get_json()
+                if not data or 'agents' not in data:
+                    return jsonify({"error": "Missing 'agents' in request body"}), 400
+                agents = data['agents']
+                if not isinstance(agents, list):
+                    return jsonify({"error": "Agents must be a list"}), 400
+                if len(agents) > max_agents:
+                    return jsonify({"error": f"Too many agents, maximum {max_agents}"}), 400
+                if not all(isinstance(agent, str) for agent in agents):
+                    return jsonify({"error": "All agents must be strings"}), 400
+                if not allow_empty and any(agent.strip() == '' for agent in agents):
+                    return jsonify({"error": "Agent names cannot be empty"}), 400
+                return f(*args, **kwargs)
+            return decorated_function
+        return decorator
 
     def get_pg_connection():
         return psycopg2.connect(**db_params)
@@ -67,9 +80,6 @@ def create_app():
     @app.route('/health', methods=['GET'])
     def health_check():
         try:
-            with get_pg_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute('SELECT 1')
             return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
         except Exception as e:
             logger.error(f"Health check failed: {e}")
@@ -77,30 +87,23 @@ def create_app():
 
     @app.route('/api/managers', methods=['POST'])
     @limiter.limit("5 per hour")
+    @require_api_key
+    @validate_agents_decorator(max_agents=300, allow_empty=False)
     def get_managers():
         """
         Получение менеджеров по списку агентов
         Body: {"agents": ["agent1", "agent2", ...]}
         """
 
-        if not validate_api_key():
-            logger.warning(f"Unauthorized access attempt from {request.remote_addr}")
-            return jsonify({"error": "Unauthorized"}), 401
-
-        if not request.is_json:
-            return jsonify({"error": "Content-Type must be application/json"}), 400
-
-        data = request.get_json()
-        if not data or 'agents' not in data:
-            return jsonify({"error": "Missing 'agents' in request body"}), 400
-
-        agents = data['agents']
-        is_valid, message = validate_agents(agents)
-        if not is_valid:
-            return jsonify({"error": message}), 400
-
         try:
-            placeholders = ','.join(['%s'] * len(agents))
+            agent_count = len(agents) # Определяем количество агентов
+            placeholder_list = ['%s'] * agent_count # Создаем список плейсхолдеров - по одному на каждого агента
+            placeholders = ', '.join(placeholder_list) # Объединяем плейсхолдеры через запятую для SQL запроса
+
+            # Результат: для 3 агентов -> '%s, %s, %s', это сделано для того, чтобы предотвратить SQL-инъекции..
+            #И вообще использовать параметризацию... но питон же сахарный язык))
+            #а можно не выебываться и использовать в одну строку, как placeholders = ','.join(['%s'] * len(agents))
+
             query = f"""
                 SELECT DISTINCT
                     pau.username AS agent,
@@ -109,9 +112,7 @@ def create_app():
                 LEFT JOIN public.user_managers pum on pum.user_id = pau.id
                 LEFT JOIN public.app_users pau2 on pau2.id = pum.manager_id
                 INNER JOIN public.orders_paid_operations popo ON popo.user_id = pau.id
-                WHERE popo.paid_operation_id = 227 
-                AND popo.is_owner = true
-                AND pau.username IN ({placeholders})
+                WHERE pau.username IN ({placeholders})
             """
 
             with get_pg_connection() as conn:
@@ -119,11 +120,8 @@ def create_app():
                     cur.execute(query, agents)
                     result = cur.fetchall()
 
-            managers_map = {row['agent']: row['manager'] for row in result}
-
-            response_data = {}
-            for agent in agents:
-                response_data[agent] = managers_map.get(agent)
+            found_managers = {row['agent']: row['manager'] for row in result}
+            response_data = {agent: found_managers.get(agent) for agent in agents}
 
             logger.info(f"Successfully processed request for {len(agents)} agents from {request.remote_addr}")
             return jsonify({"managers": response_data})
