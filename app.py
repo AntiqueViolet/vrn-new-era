@@ -103,8 +103,6 @@ def create_app():
             placeholders = ', '.join(placeholder_list) # Объединяем плейсхолдеры через запятую для SQL запроса
 
             # Результат: для 3 агентов -> '%s, %s, %s', это сделано для того, чтобы предотвратить SQL-инъекции..
-            #И вообще использовать параметризацию... но питон же сахарный язык))
-            #а можно не выебываться и использовать в одну строку, как placeholders = ','.join(['%s'] * len(agents))
 
             query = f"""
                 SELECT DISTINCT
@@ -113,7 +111,6 @@ def create_app():
                 FROM public.app_users pau
                 LEFT JOIN public.user_managers pum on pum.user_id = pau.id
                 LEFT JOIN public.app_users pau2 on pau2.id = pum.manager_id
-                INNER JOIN public.orders_paid_operations popo ON popo.user_id = pau.id
                 WHERE pau.username IN ({placeholders})
             """
 
@@ -122,8 +119,22 @@ def create_app():
                     cur.execute(query, agents)
                     result = cur.fetchall()
 
-            found_managers = {row['agent']: row['manager'] for row in result}
-            response_data = {agent: found_managers.get(agent) for agent in agents}
+            response_data = {agent: None for agent in agents}
+            
+            agent_managers = {}
+            for row in result:
+                agent = row['agent']
+                manager = row['manager']
+                
+                if manager:
+                    if agent not in agent_managers:
+                        agent_managers[agent] = set()  # Используем set для уникальности
+                    agent_managers[agent].add(manager)
+    
+            # Обновляем ответ для агентов, у которых есть менеджеры
+            for agent, managers_set in agent_managers.items():
+                if managers_set:
+                    response_data[agent] = ", ".join(sorted(managers_set))
 
             logger.info(f"Successfully processed request for {len(agents)} agents from {request.remote_addr}")
             return jsonify({"managers": response_data})
