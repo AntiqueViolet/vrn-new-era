@@ -86,7 +86,6 @@ def create_app():
             return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
     @app.route('/api/managers', methods=['POST'])
-    @limiter.limit("5 per hour")
     @require_api_key
     @validate_agents_decorator(max_agents=300, allow_empty=False)
     def get_managers():
